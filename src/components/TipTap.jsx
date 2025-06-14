@@ -1,9 +1,28 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { 
-  Bold, Italic, Underline, List, ListOrdered, Quote,
-  Code, Type, AlignLeft, AlignCenter, AlignRight,
-  Download, Upload, FileText, Moon, Sun, Save, Undo, Redo,
-  Table, Rows, Columns
+  Bold, 
+  Italic, 
+  Underline, 
+  List, 
+  ListOrdered, 
+  Quote,
+  Code,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Download,
+  Upload,
+  FileText,
+  Moon,
+  Sun,
+  Save,
+  Undo,
+  Redo,
+  Table,
+  Table2,
+  Rows,
+  Columns
 } from 'lucide-react';
 
 const TipTap = () => {
@@ -26,6 +45,24 @@ const TipTap = () => {
       setHistoryIndex(newHistory.length - 1);
     }
   }, [history, historyIndex]);
+
+  // Add this new function near the top of your component
+  const updateContent = useCallback(() => {
+    const selection = window.getSelection();
+    const range = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+    const newContent = editorRef.current.innerHTML;
+    
+    setContent(newContent);
+    saveToHistory(newContent);
+  
+    // Restore cursor position
+    if (range) {
+      requestAnimationFrame(() => {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+    }
+  }, [saveToHistory]);
 
   // Undo functionality
   const undo = () => {
@@ -54,22 +91,9 @@ const TipTap = () => {
   // Execute command helper
   const execCommand = useCallback((command, value = null) => {
     document.execCommand(command, false, value);
-    updateContent();
-  }, []);
-
-  // Update content while preserving cursor position
-  const updateContent = useCallback(() => {
-    const selection = window.getSelection();
-    const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
     const newContent = editorRef.current.innerHTML;
     setContent(newContent);
     saveToHistory(newContent);
-    
-    // Restore cursor position
-    if (range) {
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
   }, [saveToHistory]);
 
   // Formatting commands
@@ -83,27 +107,6 @@ const TipTap = () => {
   const alignLeft = () => execCommand('justifyLeft');
   const alignCenter = () => execCommand('justifyCenter');
   const alignRight = () => execCommand('justifyRight');
-
-  // Custom code formatting
-  const toggleCode = () => {
-    const selection = window.getSelection();
-    if (selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0);
-      const selectedText = range.toString();
-      
-      if (selectedText) {
-        const codeElement = document.createElement('code');
-        codeElement.className = 'bg-gray-200 dark:bg-gray-700 px-1 rounded text-sm font-mono';
-        codeElement.textContent = selectedText;
-        
-        range.deleteContents();
-        range.insertNode(codeElement);
-        selection.removeAllRanges();
-        
-        updateContent();
-      }
-    }
-  };
 
   // Insert table
   const insertTable = () => {
@@ -139,18 +142,38 @@ const TipTap = () => {
       range.insertNode(div.firstChild);
       selection.removeAllRanges();
       
-      updateContent();
+      const newContent = editorRef.current.innerHTML;
+      setContent(newContent);
+      saveToHistory(newContent);
     }
     
     setShowTableMenu(false);
   };
 
-  // Handle content changes with proper cursor preservation
-  const handleContentChange = useCallback(() => {
-    updateContent();
-  }, [updateContent]);
+  // Custom code formatting
+  const toggleCode = () => {
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      const selectedText = range.toString();
+      
+      if (selectedText) {
+        const codeElement = document.createElement('code');
+        codeElement.className = 'bg-gray-200 dark:bg-gray-700 px-1 rounded text-sm font-mono';
+        codeElement.textContent = selectedText;
+        
+        range.deleteContents();
+        range.insertNode(codeElement);
+        selection.removeAllRanges();
+        
+        const newContent = editorRef.current.innerHTML;
+        setContent(newContent);
+        saveToHistory(newContent);
+      }
+    }
+  };
 
-  // Convert HTML to Markdown with proper table support
+  // Convert HTML to Markdown
   const htmlToMarkdown = useCallback((html) => {
     // Process tables first
     let markdown = html.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (match, tableContent) => {
@@ -163,15 +186,19 @@ const TipTap = () => {
         const cells = row.match(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi);
         if (!cells) return;
         
+        // Process each cell
         const rowContent = cells.map(cell => {
-          return cell.replace(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/i, '$1')
-            .replace(/<[^>]*>/g, '')
-            .replace(/\n/g, ' ')
+          // Remove any HTML tags from cell content
+          const cellContent = cell.replace(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/i, '$1')
+            .replace(/<[^>]*>/g, '') // Remove all HTML tags
+            .replace(/\n/g, ' ') // Replace newlines with spaces
             .trim();
+          return cellContent;
         }).join(' | ');
         
         mdTable += `| ${rowContent} |\n`;
         
+        // Add header separator after first row
         if (rowIndex === 0) {
           mdTable += `| ${cells.map(() => '---').join(' | ')} |\n`;
         }
@@ -209,8 +236,9 @@ const TipTap = () => {
     return markdown;
   }, []);
 
-  // Convert HTML to RTF with table support
+  // Convert HTML to RTF
   const htmlToRTF = useCallback((html) => {
+    // Process tables first
     let rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Times New Roman;}{\\f1 Courier New;}}\\f0\\fs24 ';
     
     const processedHtml = html
@@ -219,21 +247,26 @@ const TipTap = () => {
         if (!rows) return '';
         
         let rtfTable = '{\\trowd\\trgaph100\\trleft0';
+        
+        // Calculate column width (50% of page width divided by number of columns)
         const cols = rows[0] ? rows[0].match(/<t[dh][^>]*>/gi)?.length || 1 : 1;
         const colWidth = Math.floor(5000 / cols);
         
+        // Add column definitions
         for (let i = 0; i < cols; i++) {
           rtfTable += `\\clbrdrl\\brdrs\\clbrdrt\\brdrs\\clbrdrb\\brdrs\\clbrdrr\\brdrs\\cellx${(i + 1) * colWidth}`;
         }
         
+        // Process each row
         rows.forEach(row => {
           const cells = row.match(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi);
           if (!cells) return;
           
+          // Process each cell
           cells.forEach(cell => {
             const cellContent = cell.replace(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/i, '$1')
-              .replace(/<[^>]*>/g, '')
-              .replace(/&nbsp;/g, ' ')
+              .replace(/<[^>]*>/g, '') // Remove HTML tags
+              .replace(/&nbsp;/g, ' ') // Replace non-breaking spaces
               .trim();
             
             rtfTable += `\\intbl ${cellContent}\\cell`;
@@ -271,8 +304,9 @@ const TipTap = () => {
     return rtf;
   }, []);
 
-  // Create DOCX with table support
+  // Create a simple DOCX file (using HTML as body)
   const createDocx = useCallback((html) => {
+    // Process tables first
     const processedHtml = html.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (match, tableContent) => {
       const rows = tableContent.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
       if (!rows) return '';
@@ -300,8 +334,8 @@ const TipTap = () => {
         
         cells.forEach(cell => {
           const cellContent = cell.replace(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/i, '$1')
-            .replace(/<[^>]*>/g, '')
-            .replace(/&nbsp;/g, ' ')
+            .replace(/<[^>]*>/g, '') // Remove HTML tags
+            .replace(/&nbsp;/g, ' ') // Replace non-breaking spaces
             .trim();
           
           docxTable += `
@@ -324,6 +358,7 @@ const TipTap = () => {
       return docxTable;
     });
     
+    // Remove HTML tags and convert to plain text with basic formatting
     const plainText = processedHtml
       .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '$1\n\n')
       .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '$1\n\n')
@@ -349,7 +384,8 @@ const TipTap = () => {
       .replace(/\n\s*\n\s*\n/g, '\n\n')
       .trim();
 
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    // Create a minimal DOCX structure (simplified)
+    const docxContent = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     ${plainText.split('\n\n').map(paragraph => 
@@ -357,9 +393,10 @@ const TipTap = () => {
     ).join('')}
   </w:body>
 </w:document>`;
+
+    return docxContent;
   }, []);
 
-  // Handle file upload with table support
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -368,13 +405,16 @@ const TipTap = () => {
         let fileContent = e.target.result;
         let htmlContent;
         
+        // Handle different file types
         if (file.name.endsWith('.rtf')) {
+          // Basic RTF to HTML conversion (simplified)
           htmlContent = fileContent
             .replace(/\\par\s*/g, '</p><p>')
             .replace(/\{\\b\s*(.*?)\}/g, '<strong>$1</strong>')
             .replace(/\{\\i\s*(.*?)\}/g, '<em>$1</em>')
             .replace(/\{\\ul\s*(.*?)\}/g, '<u>$1</u>')
             .replace(/\{\\trowd[\s\S]*?\\row\s*}/g, (match) => {
+              // Very basic table conversion
               const rows = match.split('\\row');
               let tableHtml = '<table border="1">';
               
@@ -397,34 +437,43 @@ const TipTap = () => {
               tableHtml += '</table>';
               return tableHtml;
             })
-            .replace(/\{[^}]*\}/g, '')
-            .replace(/\\/g, '')
+            .replace(/\{[^}]*\}/g, '') // Remove other RTF commands
+            .replace(/\\/g, '') // Remove backslashes
             .split('\n')
             .map(line => line.trim() ? `<p>${line}</p>` : '<p><br></p>')
             .join('');
         } else if (file.name.endsWith('.doc') || file.name.endsWith('.docx')) {
+          // Handle DOC/DOCX files - extract content from HTML body
           if (fileContent.includes('<body>')) {
+            // Extract content between body tags
             const bodyMatch = fileContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            if (bodyMatch) fileContent = bodyMatch[1];
+            if (bodyMatch) {
+              fileContent = bodyMatch[1];
+            }
           }
           
-          htmlContent = fileContent
-            .replace(/xmlns[^=]*="[^"]*"/g, '')
-            .replace(/<\?xml[^>]*\?>/g, '')
-            .replace(/<!DOCTYPE[^>]*>/g, '')
-            .replace(/<html[^>]*>/g, '')
-            .replace(/<\/html>/g, '')
-            .replace(/<head[\s\S]*?<\/head>/gi, '')
-            .replace(/<!--[\s\S]*?-->/g, '')
-            .replace(/<o:p>\s*<\/o:p>/g, '')
+          // Clean up XML namespaces and unwanted elements
+          fileContent = fileContent
+            .replace(/xmlns[^=]*="[^"]*"/g, '') // Remove XML namespaces
+            .replace(/<\?xml[^>]*\?>/g, '') // Remove XML declarations
+            .replace(/<!DOCTYPE[^>]*>/g, '') // Remove DOCTYPE
+            .replace(/<html[^>]*>/g, '') // Remove html opening tag
+            .replace(/<\/html>/g, '') // Remove html closing tag
+            .replace(/<head[\s\S]*?<\/head>/gi, '') // Remove head section
+            .replace(/<!--[\s\S]*?-->/g, '') // Remove comments
+            .replace(/<o:p>\s*<\/o:p>/g, '') // Remove empty Office paragraphs
             .trim();
           
-          if (!htmlContent.includes('<p>') && !htmlContent.includes('<h1>') && !htmlContent.includes('<div>')) {
+          // If it's still HTML, keep as is, otherwise convert to paragraphs
+          if (fileContent.includes('<p>') || fileContent.includes('<h1>') || fileContent.includes('<div>')) {
+            htmlContent = fileContent;
+          } else {
             htmlContent = fileContent.split('\n').map(line => 
               line.trim() ? `<p>${line}</p>` : '<p><br></p>'
             ).join('');
           }
         } else {
+          // Convert plain text to HTML with paragraphs
           htmlContent = fileContent.split('\n').map(line => 
             line.trim() ? `<p>${line}</p>` : '<p><br></p>'
           ).join('');
@@ -438,7 +487,6 @@ const TipTap = () => {
     }
   };
 
-  // Export functions
   const exportAsMarkdown = () => {
     const markdown = htmlToMarkdown(content);
     downloadFile(markdown, 'document.md', 'text/markdown');
@@ -450,8 +498,34 @@ const TipTap = () => {
   };
 
   const exportAsDocx = () => {
-    const docx = createDocx(content);
-    downloadFile(docx, 'document.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    // Create a clean HTML document without XML namespaces
+    const cleanContent = content
+      .replace(/<p><br><\/p>/g, '<p>&nbsp;</p>'); // Replace empty paragraphs
+    
+    const wordDoc = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Document</title>
+  <style>
+    body { font-family: 'Times New Roman', serif; font-size: 12pt; margin: 1in; }
+    h1 { font-size: 16pt; font-weight: bold; margin: 12pt 0; }
+    h2 { font-size: 14pt; font-weight: bold; margin: 10pt 0; }
+    h3 { font-size: 12pt; font-weight: bold; margin: 8pt 0; }
+    p { margin: 6pt 0; }
+    ul, ol { margin: 6pt 0; padding-left: 20pt; }
+    blockquote { margin: 6pt 20pt; padding-left: 10pt; border-left: 2pt solid #ccc; }
+    table { border-collapse: collapse; width: 100%; margin: 10pt 0; }
+    th, td { border: 1pt solid #000; padding: 4pt; }
+    th { background-color: #f2f2f2; font-weight: bold; }
+  </style>
+</head>
+<body>
+${cleanContent}
+</body>
+</html>`;
+    
+    downloadFile(wordDoc, 'document.doc', 'application/msword');
   };
 
   const downloadFile = (content, filename, mimeType) => {
@@ -466,7 +540,12 @@ const TipTap = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Apply styling to elements
+  // Update the handleContentChange function
+  const handleContentChange = () => {
+    updateContent();
+  };
+
+  // Apply styling to specific elements on content change
   useEffect(() => {
     if (editorRef.current) {
       // Style blockquotes
@@ -538,12 +617,14 @@ const TipTap = () => {
         : 'bg-gradient-to-br from-blue-50 to-indigo-100'
     }`}>
       <div className="max-w-6xl mx-auto p-6">
-        {/* Header with Toolbar */}
-        <div className={`rounded-2xl backdrop-blur-sm border mb-6 z-20 relative ${
-          darkMode 
-            ? 'bg-gray-800/30 border-gray-700 text-white' 
-            : 'bg-white/40 border-gray-200 text-gray-800'
-        }`}>
+
+       {/* Header with Toolbar */}
+            <div className={`rounded-2xl backdrop-blur-sm border mb-6 z-20 relative ${
+            darkMode 
+                ? 'bg-gray-800/30 border-gray-700 text-white' 
+                : 'bg-white/40 border-gray-200 text-gray-800'
+            }`}>
+          
           {/* Top Header */}
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center space-x-3">
@@ -594,7 +675,7 @@ const TipTap = () => {
             
             <ToolbarButton 
               onClick={exportAsDocx}
-              title="Export as DOCX"
+              title="Export as DOC"
             >
               <FileText className="w-4 h-4" />
             </ToolbarButton>
@@ -689,63 +770,63 @@ const TipTap = () => {
             
             <div className={`w-px h-6 mx-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-300'}`} />
             
-            {/* Table Button with Dropdown */}
+           {/* Table Button with Dropdown */}
             <div className="relative">
-              <ToolbarButton 
+            <ToolbarButton 
                 onClick={() => setShowTableMenu(!showTableMenu)}
                 title="Insert Table"
-              >
+            >
                 <Table className="w-4 h-4" />
-              </ToolbarButton>
-              
-              {showTableMenu && (
+            </ToolbarButton>
+            
+            {showTableMenu && (
                 <div className={`absolute z-50 mt-1 left-0 p-4 rounded-lg shadow-lg ${
-                  darkMode 
+                darkMode 
                     ? 'bg-gray-800 border border-gray-700' 
                     : 'bg-white border border-gray-200'
                 }`}>
-                  <div className="flex items-center space-x-2 mb-3">
+                <div className="flex items-center space-x-2 mb-3">
                     <Rows className="w-4 h-4" />
                     <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={tableRows}
-                      onChange={(e) => setTableRows(parseInt(e.target.value) || 1)}
-                      className={`w-16 p-1 rounded border ${
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={tableRows}
+                    onChange={(e) => setTableRows(parseInt(e.target.value) || 1)}
+                    className={`w-16 p-1 rounded border ${
                         darkMode 
-                          ? 'bg-gray-700 border-gray-600 text-white' 
-                          : 'bg-white border-gray-300'
-                      }`}
+                        ? 'bg-gray-700 border-gray-600 text-white' 
+                        : 'bg-white border-gray-300'
+                    }`}
                     />
-                  </div>
-                  <div className="flex items-center space-x-2 mb-3">
+                </div>
+                <div className="flex items-center space-x-2 mb-3">
                     <Columns className="w-4 h-4" />
                     <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={tableCols}
-                      onChange={(e) => setTableCols(parseInt(e.target.value) || 1)}
-                      className={`w-16 p-1 rounded border ${
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={tableCols}
+                    onChange={(e) => setTableCols(parseInt(e.target.value) || 1)}
+                    className={`w-16 p-1 rounded border ${
                         darkMode 
-                          ? 'bg-gray-700 border-gray-600 text-white' 
-                          : 'bg-white border-gray-300'
-                      }`}
+                        ? 'bg-gray-700 border-gray-600 text-white' 
+                        : 'bg-white border-gray-300'
+                    }`}
                     />
-                  </div>
-                  <button
+                </div>
+                <button
                     onClick={insertTable}
                     className={`w-full py-1 px-3 rounded ${
-                      darkMode 
+                    darkMode 
                         ? 'bg-blue-600 hover:bg-blue-700 text-white' 
                         : 'bg-blue-500 hover:bg-blue-600 text-white'
                     }`}
-                  >
+                >
                     Insert Table
-                  </button>
+                </button>
                 </div>
-              )}
+            )}
             </div>
             
             <div className={`w-px h-6 mx-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-300'}`} />
@@ -775,8 +856,9 @@ const TipTap = () => {
         </div>
 
         {/* Editor */}
+
         <div className={`rounded-2xl backdrop-blur-sm border z-10 ${
-          darkMode 
+        darkMode 
             ? 'bg-gray-800/30 border-gray-700' 
             : 'bg-white/40 border-gray-200'
         }`}>
@@ -803,7 +885,7 @@ const TipTap = () => {
             : 'bg-white/20 text-gray-600'
         }`}>
           <p className="text-sm">
-            <strong>How to use:</strong> Select text and use formatting buttons • Upload .txt/.doc/.docx/.rtf/.html files • Export to Markdown, DOCX & RTF formats • Click the table icon to insert tables
+            <strong>How to use:</strong> Select text and use formatting buttons • Upload .txt/.doc/.docx/.rtf/.html files • Export to Markdown, DOC & RTF formats • Click the table icon to insert tables
           </p>
         </div>
       </div>
