@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
+import * as mammoth from 'mammoth';
 import { 
   Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, 
   AlignJustify, Code, Palette, Type, Highlighter, Table, Plus, Download, 
-  Upload, Sun, Moon, Smile, FileText, File, Hash, ChevronDown
+  Upload, Sun, Moon, Smile, FileText, File, Hash, ChevronDown, Link
 } from 'lucide-react';
 
 const TipTap2 = () => {
@@ -12,6 +13,7 @@ const TipTap2 = () => {
   const [currentFont, setCurrentFont] = useState('Arial');
   const [currentSize, setCurrentSize] = useState('16');
   const [selectedText, setSelectedText] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -177,6 +179,37 @@ const TipTap2 = () => {
     applyFormat('insertHTML', tableHTML);
   };
 
+  const insertLink = () => {
+    const url = prompt('Enter the URL:');
+    if (url) {
+      const selectedText = window.getSelection().toString();
+      const linkText = selectedText || prompt('Enter the link text:') || url;
+      
+      restoreSelection();
+      
+      if (selectedText) {
+        // If text is selected, wrap it in a link
+        applyFormat('createLink', url);
+        // Apply styling to the created link
+        setTimeout(() => {
+          const links = editorRef.current?.querySelectorAll('a');
+          if (links) {
+            const lastLink = links[links.length - 1];
+            if (lastLink) {
+              lastLink.style.color = '#2563eb';
+              lastLink.style.textDecoration = 'underline';
+              lastLink.setAttribute('target', '_blank');
+            }
+          }
+        }, 100);
+      } else {
+        // If no text is selected, insert a new link
+        const linkHTML = `<a href="${url}" target="_blank" style="color: #2563eb; text-decoration: underline;">${linkText}</a>`;
+        applyFormat('insertHTML', linkHTML);
+      }
+    }
+  };
+
   const insertEmoji = (emoji) => {
     restoreSelection();
     applyFormat('insertText', emoji);
@@ -262,43 +295,174 @@ const TipTap2 = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleFileUpload = (event) => {
+  const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      let content = e.target.result;
-      
-      if (file.name.endsWith('.md')) {
+    setIsUploading(true);
+
+    try {
+      let content = '';
+
+      if (file.name.toLowerCase().endsWith('.docx')) {
+        // Handle DOCX files using mammoth with enhanced options
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Configure mammoth options for better formatting preservation
+        const options = {
+          styleMap: [
+            "p[style-name='Heading 1'] => h1:fresh",
+            "p[style-name='Heading 2'] => h2:fresh",
+            "p[style-name='Heading 3'] => h3:fresh",
+            "p[style-name='Heading 4'] => h4:fresh",
+            "p[style-name='Heading 5'] => h5:fresh",
+            "p[style-name='Heading 6'] => h6:fresh",
+            "r[style-name='Strong'] => strong",
+            "r[style-name='Emphasis'] => em",
+            "p[style-name='Code'] => pre",
+            "r[style-name='Code Char'] => code"
+          ],
+          convertImage: mammoth.images.imgElement(function(image) {
+            return image.read("base64").then(function(imageBuffer) {
+              return {
+                src: "data:" + image.contentType + ";base64," + imageBuffer
+              };
+            });
+          }),
+          includeDefaultStyleMap: true
+        };
+        
+        const result = await mammoth.convertToHtml({ arrayBuffer }, options);
+        content = result.value;
+        
+        // Enhanced HTML processing to preserve more formatting
         content = content
-          .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-          .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-          .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-          .replace(/\*(.*?)\*/g, '<em>$1</em>')
-          .replace(/`(.*?)`/g, '<code>$1</code>')
-          .replace(/\n\n/g, '</p><p>')
+          // Preserve hyperlinks
+          .replace(/<a([^>]*)>/g, '<a$1 style="color: #2563eb; text-decoration: underline;">')
+          // Convert paragraph tags to divs for better compatibility
+          .replace(/<p([^>]*)>/g, '<div$1>')
+          .replace(/<\/p>/g, '</div>')
+          // Remove empty paragraphs but preserve line breaks
+          .replace(/<div[^>]*><\/div>/g, '<div><br></div>')
+          // Preserve bold formatting with proper styling
+          .replace(/<strong([^>]*)>/g, '<strong$1 style="font-weight: bold;">')
+          // Preserve italic formatting
+          .replace(/<em([^>]*)>/g, '<em$1 style="font-style: italic;">')
+          // Preserve underline if present
+          .replace(/<u([^>]*)>/g, '<u$1 style="text-decoration: underline;">')
+          // Handle line breaks properly
           .replace(/\n/g, '<br>')
-          .replace(/^/, '<p>')
-          .replace(/$/, '</p>');
-      } else if (file.name.endsWith('.rtf')) {
-        content = content
-          .replace(/\{\\b (.*?)\}/g, '<strong>$1</strong>')
-          .replace(/\{\\i (.*?)\}/g, '<em>$1</em>')
-          .replace(/\\par/g, '<br>')
-          .replace(/\{[^}]*\}/g, '')
-          .replace(/\\[a-z]+[0-9]*\s?/gi, '');
+          // Clean up excessive whitespace but preserve structure
+          .replace(/(<br>\s*){3,}/g, '<br><br>');
+
+        // Log any conversion messages/warnings
+        if (result.messages && result.messages.length > 0) {
+          console.log('Conversion messages:', result.messages);
+        }
+          
+      } else if (file.name.toLowerCase().endsWith('.doc')) {
+        // Enhanced .doc file handling
+        try {
+          const text = await file.text();
+          
+          // Try to extract formatting information from .doc files
+          // This is limited but better than plain text
+          const lines = text.split(/\r?\n/);
+          const processedLines = [];
+          
+          for (let line of lines) {
+            // Clean up binary characters but preserve readable text
+            line = line.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
+            line = line.trim();
+            
+            if (line.length > 0) {
+              // Try to detect headings (lines that are short and might be titles)
+              if (line.length < 100 && line.match(/^[A-Z][A-Za-z\s]*[A-Za-z]$/)) {
+                processedLines.push(`<h3 style="font-weight: bold; font-size: 1.2em; margin: 1em 0;">${line}</h3>`);
+              } else {
+                processedLines.push(`<div style="margin: 0.5em 0;">${line}</div>`);
+              }
+            } else {
+              processedLines.push('<div><br></div>');
+            }
+          }
+          
+          content = processedLines.join('');
+          
+        } catch (docError) {
+          console.error('Error processing .doc file:', docError);
+          throw new Error('Unable to process .doc file. Please try converting to .docx format for better results.');
+        }
+          
+      } else {
+        // Handle other file types with enhanced processing
+        const text = await file.text();
+        
+        if (file.name.endsWith('.md')) {
+          // Enhanced Markdown processing
+          content = text
+            // Headers
+            .replace(/^# (.*$)/gm, '<h1 style="font-size: 2em; font-weight: bold; margin: 1em 0;">$1</h1>')
+            .replace(/^## (.*$)/gm, '<h2 style="font-size: 1.5em; font-weight: bold; margin: 0.8em 0;">$1</h2>')
+            .replace(/^### (.*$)/gm, '<h3 style="font-size: 1.2em; font-weight: bold; margin: 0.6em 0;">$1</h3>')
+            // Links
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color: #2563eb; text-decoration: underline;">$1</a>')
+            // Bold and italic
+            .replace(/\*\*\*(.*?)\*\*\*/g, '<strong style="font-weight: bold;"><em style="font-style: italic;">$1</em></strong>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: bold;">$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em style="font-style: italic;">$1</em>')
+            // Code
+            .replace(/`([^`]+)`/g, '<code style="background-color: #f3f4f6; padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>')
+            // Convert to HTML structure
+            .replace(/\n\n/g, '</div><div style="margin: 0.5em 0;">')
+            .replace(/\n/g, '<br>')
+            .replace(/^/, '<div style="margin: 0.5em 0;">')
+            .replace(/$/, '</div>');
+            
+        } else if (file.name.endsWith('.rtf')) {
+          // Enhanced RTF processing
+          content = text
+            .replace(/\{\\b ([^}]*)\}/g, '<strong style="font-weight: bold;">$1</strong>')
+            .replace(/\{\\i ([^}]*)\}/g, '<em style="font-style: italic;">$1</em>')
+            .replace(/\{\\ul ([^}]*)\}/g, '<u style="text-decoration: underline;">$1</u>')
+            .replace(/\\par\s*/g, '</div><div style="margin: 0.5em 0;">')
+            .replace(/\{[^}]*\}/g, '')
+            .replace(/\\[a-z]+[0-9]*\s?/gi, '')
+            .replace(/^/, '<div style="margin: 0.5em 0;">')
+            .replace(/$/, '</div>');
+        } else {
+          // Enhanced plain text processing
+          const lines = text.split('\n');
+          content = lines
+            .map(line => {
+              if (line.trim() === '') {
+                return '<div><br></div>';
+              }
+              return `<div style="margin: 0.5em 0;">${line}</div>`;
+            })
+            .join('');
+        }
       }
       
       if (editorRef.current) {
-        editorRef.current.innerHTML = content;
+        // Clear existing content first
+        editorRef.current.innerHTML = '';
+        
+        // Set the new content
+        editorRef.current.innerHTML = content || '<div><br></div>';
         setContent(content);
+        
+        // Focus the editor
+        editorRef.current.focus();
       }
-    };
-    
-    reader.readAsText(file);
-    event.target.value = '';
+      
+    } catch (error) {
+      console.error('Error processing file:', error);
+      alert(`Error processing file: ${error.message || 'Please try again or use a different file format.'}`);
+    } finally {
+      setIsUploading(false);
+      event.target.value = '';
+    }
   };
 
   const handleEditorChange = () => {
@@ -475,12 +639,15 @@ const TipTap2 = () => {
 
               <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
 
-              {/* Code & Table */}
+              {/* Code, Table & Link */}
               <button onClick={insertCodeBlock} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Code Block">
                 <Code size={18} />
               </button>
               <button onClick={insertTable} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Insert Table">
                 <Table size={18} />
+              </button>
+              <button onClick={insertLink} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Insert Link">
+                <Link size={18} />
               </button>
 
               {/* Emojis */}
@@ -510,11 +677,16 @@ const TipTap2 = () => {
               {/* File Operations */}
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-1 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+                disabled={isUploading}
+                className={`flex items-center gap-1 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors ${
+                  isUploading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
                 title="Upload File"
               >
                 <Upload size={16} />
-                <span className="text-sm hidden sm:inline">Upload</span>
+                <span className="text-sm hidden sm:inline">
+                  {isUploading ? 'Uploading...' : 'Upload'}
+                </span>
               </button>
               
               <input
@@ -523,6 +695,7 @@ const TipTap2 = () => {
                 accept=".doc,.docx,.rtf,.md,.txt"
                 onChange={handleFileUpload}
                 className="hidden"
+                disabled={isUploading}
               />
 
               {/* Download Buttons */}
@@ -576,6 +749,7 @@ const TipTap2 = () => {
             >
               <p>Welcome to your rich text editor! Start typing here...</p>
               <p>You can format text, create tables, add code blocks, and much more!</p>
+              
             </div>
           </div>
         </div>
